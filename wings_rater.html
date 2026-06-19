@@ -1177,32 +1177,34 @@ function escHtml(s) {
 // ── Audio engine ────────────────────────────────────
 let audioCtx = null;
 const soundBuffers = {};
+let audioReady = false;
 
-function getAudioCtx() {
-  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  return audioCtx;
-}
-
-async function loadSound(name, url) {
+async function initAudio() {
+  if (audioReady) return;
   try {
-    const res = await fetch(url);
-    const arr = await res.arrayBuffer();
-    const ctx = getAudioCtx();
-    soundBuffers[name] = await ctx.decodeAudioData(arr);
-  } catch(e) { console.warn('Could not load sound:', name, e); }
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    await audioCtx.resume();
+    const [r1, r2] = await Promise.all([fetch('chicken.mp3'), fetch('cluck.mp3')]);
+    const [a1, a2] = await Promise.all([r1.arrayBuffer(), r2.arrayBuffer()]);
+    [soundBuffers['chicken'], soundBuffers['cluck']] = await Promise.all([
+      audioCtx.decodeAudioData(a1),
+      audioCtx.decodeAudioData(a2)
+    ]);
+    audioReady = true;
+  } catch(e) { console.warn('Audio init failed:', e); }
 }
 
-async function playSound(name) {
-  const ctx = getAudioCtx();
-  if (ctx.state === 'suspended') await ctx.resume();
-  if (!soundBuffers[name]) await loadSound(name, name === 'chicken' ? 'chicken.mp3' : 'cluck.mp3');
-  const buf = soundBuffers[name];
-  if (!buf) return;
-  const src = ctx.createBufferSource();
-  src.buffer = buf;
-  src.connect(ctx.destination);
+function playSound(name) {
+  if (!audioReady || !soundBuffers[name]) return;
+  const src = audioCtx.createBufferSource();
+  src.buffer = soundBuffers[name];
+  src.connect(audioCtx.destination);
   src.start(0);
 }
+
+// Warm up audio on first touch anywhere
+document.addEventListener('touchstart', initAudio, { once: true });
+document.addEventListener('mousedown',  initAudio, { once: true });
 
 function playChickenSound() { playSound('chicken'); }
 
