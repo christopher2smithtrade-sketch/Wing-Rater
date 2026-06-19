@@ -1175,24 +1175,32 @@ function escHtml(s) {
 
 
 // ── Audio engine ────────────────────────────────────
-const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+let audioCtx = null;
 const soundBuffers = {};
+
+function getAudioCtx() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  return audioCtx;
+}
 
 async function loadSound(name, url) {
   try {
     const res = await fetch(url);
     const arr = await res.arrayBuffer();
-    soundBuffers[name] = await audioCtx.decodeAudioData(arr);
+    const ctx = getAudioCtx();
+    soundBuffers[name] = await ctx.decodeAudioData(arr);
   } catch(e) { console.warn('Could not load sound:', name, e); }
 }
 
-function playSound(name) {
+async function playSound(name) {
+  const ctx = getAudioCtx();
+  if (ctx.state === 'suspended') await ctx.resume();
+  if (!soundBuffers[name]) await loadSound(name, name === 'chicken' ? 'chicken.mp3' : 'cluck.mp3');
   const buf = soundBuffers[name];
   if (!buf) return;
-  if (audioCtx.state === 'suspended') audioCtx.resume();
-  const src = audioCtx.createBufferSource();
+  const src = ctx.createBufferSource();
   src.buffer = buf;
-  src.connect(audioCtx.destination);
+  src.connect(ctx.destination);
   src.start(0);
 }
 
@@ -1217,8 +1225,6 @@ if ('serviceWorker' in navigator) {
 }
 
 // ── Boot ────────────────────────────────────────────
-loadSound('chicken', 'chicken.mp3');
-loadSound('cluck',   'cluck.mp3');
 loadLeaderboard();
 
 </script>
