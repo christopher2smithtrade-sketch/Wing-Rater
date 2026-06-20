@@ -759,7 +759,7 @@
     <path d="M62,112 L52,115 M62,112 L62,119 M62,112 L70,115" stroke="#f5a020" stroke-width="2.5" stroke-linecap="round"/>
   </svg>
 </div>
-<p class="subtitle">Rate wings. Find the best spot. No debates.</p>
+<p class="subtitle">Rate wings. Find the best spot. No debates — just data.</p>
 
 <div class="layout">
 
@@ -768,7 +768,11 @@
     <h2>🔥 Rate Some Wings</h2>
 
     <label>Your Name</label>
-    <input type="text" id="f-rater" placeholder="e.g. Chris" maxlength="40">
+    <select id="f-rater">
+      <option value="">— Select your name —</option>
+      <option value="__new__">➕ Add my name…</option>
+    </select>
+    <input type="text" id="f-rater-new" placeholder="Type your name" maxlength="40" style="display:none;margin-top:6px">
 
     <label>Place Name</label>
     <select id="f-place">
@@ -798,7 +802,7 @@
     <label>Size</label>
     <div class="score-group">
       <div class="score-label-row">
-        <span style="font-size:.75rem;color:var(--muted)">How big are these wings?</span>
+        <span style="font-size:.75rem;color:var(--muted)">How big are these things?</span>
         <span class="score-display" id="d-size">—</span>
       </div>
       <div class="btn-row" id="br-size"></div>
@@ -807,7 +811,7 @@
     <label>Chicken Quality</label>
     <div class="score-group">
       <div class="score-label-row">
-        <span style="font-size:.75rem;color:var(--muted)">Look, cook, meatiness &amp; crispiness — the whole wing.</span>
+        <span style="font-size:.75rem;color:var(--muted)">Look, cook, meatiness &amp; crispiness — the whole bird.</span>
         <span class="score-display" id="d-chicken">—</span>
       </div>
       <div class="btn-row" id="br-chicken"></div>
@@ -816,7 +820,7 @@
     <label>Price / Value</label>
     <div class="score-group">
       <div class="score-label-row">
-        <span style="font-size:.75rem;color:var(--muted)">Worth the money?</span>
+        <span style="font-size:.75rem;color:var(--muted)">Worth the money? 10 = steal of the century.</span>
         <span class="score-display" id="d-price">—</span>
       </div>
       <div class="btn-row" id="br-price"></div>
@@ -825,7 +829,7 @@
     <label>Your Overall Score</label>
     <div class="score-group">
       <div class="score-label-row">
-        <span style="font-size:.75rem;color:var(--muted)">Your gut feeling.</span>
+        <span style="font-size:.75rem;color:var(--muted)">Your gut feeling — overrides the math.</span>
         <span class="score-display" id="d-overall">—</span>
       </div>
       <div class="btn-row" id="br-overall"></div>
@@ -955,6 +959,28 @@ function getPlace() {
   return sel.value;
 }
 
+// ── Rater selector toggle ────────────────────────────
+document.getElementById('f-rater').addEventListener('change', function() {
+  const newInput = document.getElementById('f-rater-new');
+  if (this.value === '__new__') {
+    newInput.style.display = 'block';
+    newInput.focus();
+  } else {
+    newInput.style.display = 'none';
+    newInput.value = '';
+    localStorage.setItem('wings-rater', this.value);
+  }
+});
+
+function getRater() {
+  const sel = document.getElementById('f-rater');
+  if (sel.value === '__new__') {
+    const name = document.getElementById('f-rater-new').value.trim();
+    return name.charAt(0).toUpperCase() + name.slice(1);
+  }
+  return sel.value;
+}
+
 // ── Form init ───────────────────────────────────────
 buildScoreButtons('br-sauce',   'sauce',           'd-sauce');
 buildScoreButtons('br-size',    'size',            'd-size');
@@ -967,7 +993,7 @@ document.getElementById('f-date').value = new Date().toISOString().slice(0, 10);
 
 // ── Submit ──────────────────────────────────────────
 async function submitRating() {
-  const rater      = document.getElementById('f-rater').value.trim();
+  const rater      = getRater();
   const place      = getPlace();
   const visited_on = document.getElementById('f-date').value;
   const notes      = document.getElementById('f-notes').value.trim();
@@ -993,6 +1019,7 @@ async function submitRating() {
   if (res) {
     msg.className = 'status-msg ok';
     msg.textContent = '✅ Rating saved! Nice wings.';
+    localStorage.setItem('wings-rater', rater);
     playChickenSound();
     resetForm();
     loadLeaderboard();
@@ -1008,6 +1035,8 @@ function resetForm() {
   document.getElementById('f-place').value = '';
   document.getElementById('f-place-new').style.display = 'none';
   document.getElementById('f-place-new').value = '';
+  document.getElementById('f-rater-new').style.display = 'none';
+  document.getElementById('f-rater-new').value = '';
   ['br-sauce','br-size','br-chicken','br-price','br-overall'].forEach(id => {
     document.getElementById(id).querySelectorAll('.score-btn').forEach(b => b.classList.remove('active'));
   });
@@ -1037,6 +1066,19 @@ async function loadLeaderboard() {
   const HARDCODED = ['THE JUGHANDLE','WHISTLERS INN','BOBBY RAYS','45TH ST PUB',"BRYSON'S PUB","MARCO'S"];
   const dbPlaces  = [...new Set(data.map(r => r.place))];
   const allPlaces = [...new Set([...HARDCODED, ...dbPlaces])].sort();
+
+  // rebuild rater dropdown from DB names
+  const raterSel  = document.getElementById('f-rater');
+  const savedRater = localStorage.getItem('wings-rater') || '';
+  const dbRaters  = [...new Set(data.map(r => r.rater).filter(Boolean))].sort();
+  raterSel.innerHTML = '<option value="">— Select your name —</option>';
+  dbRaters.forEach(name => {
+    const opt = document.createElement('option');
+    opt.value = name; opt.textContent = name;
+    raterSel.appendChild(opt);
+  });
+  raterSel.innerHTML += '<option value="__new__">➕ Add my name…</option>';
+  if (savedRater) raterSel.value = savedRater;
 
   const formSel = document.getElementById('f-place');
   const lbSel   = document.getElementById('lb-search');
