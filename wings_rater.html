@@ -460,6 +460,17 @@
   }
   .header-chickens svg { width: 68px; height: 68px; opacity: .75; }
   .header-chickens svg.saucy { opacity: .7; }
+  .add-photo-btn {
+    background: transparent;
+    border: 1px dashed var(--border);
+    color: var(--muted);
+    border-radius: 8px;
+    padding: 6px 12px;
+    font-size: .8rem;
+    cursor: pointer;
+    transition: all .15s;
+  }
+  .add-photo-btn:hover { border-color: var(--accent); color: var(--accent); }
 
 </style>
 </head>
@@ -850,6 +861,12 @@
     <label>Notes <span style="font-weight:400;color:var(--muted)">(optional)</span></label>
     <textarea id="f-notes" placeholder="Extra wet? Dry rub? Worth the drive?"></textarea>
 
+    <label>Photo <span style="font-weight:400;color:var(--muted)">(optional)</span></label>
+    <input type="file" id="f-photo" accept="image/*" style="margin-bottom:6px">
+    <div id="photo-preview-wrap" style="display:none;margin-bottom:10px">
+      <img id="photo-preview" style="max-width:100%;border-radius:10px;border:1px solid var(--border)">
+    </div>
+
     <button class="btn-submit" id="btn-submit" onclick="submitRating()">Submit Rating</button>
     <div class="status-msg" id="status-msg"></div>
   </div>
@@ -901,6 +918,68 @@ async function sbFetch(path, opts = {}) {
     return txt ? JSON.parse(txt) : null;
   } catch(e) { console.error('Supabase error', e); return null; }
 }
+
+// ── Photo upload to Supabase Storage ────────────────
+const PHOTO_BUCKET = 'wing-photos';
+
+async function uploadPhoto(file) {
+  if (!file) return null;
+  const ext = (file.name.split('.').pop() || 'jpg').toLowerCase();
+  const path = Date.now() + '-' + Math.random().toString(36).slice(2, 8) + '.' + ext;
+  try {
+    const res = await fetch(SB_URL + '/storage/v1/object/' + PHOTO_BUCKET + '/' + path, {
+      method: 'POST',
+      headers: {
+        'apikey':        SB_KEY,
+        'Authorization': 'Bearer ' + SB_KEY,
+        'Content-Type':  file.type || 'image/jpeg',
+        'x-upsert':      'true'
+      },
+      body: file
+    });
+    if (!res.ok) { console.error('Photo upload failed', res.status, await res.text()); return null; }
+    return SB_URL + '/storage/v1/object/public/' + PHOTO_BUCKET + '/' + path;
+  } catch(e) { console.error('Photo upload error', e); return null; }
+}
+
+// attach a photo to an existing rating (triggers hidden file picker)
+function addPhotoToRating(id) {
+  document.getElementById('latephoto-' + id).click();
+}
+
+async function uploadLatePhoto(id, input) {
+  const file = input.files[0];
+  if (!file) return;
+  const btn = input.previousElementSibling;
+  if (btn) { btn.textContent = 'Uploading…'; btn.disabled = true; }
+  const url = await uploadPhoto(file);
+  if (!url) {
+    if (btn) { btn.textContent = '❌ Failed — tap to retry'; btn.disabled = false; }
+    return;
+  }
+  const res = await sbFetch('wings_ratings?id=eq.' + id, {
+    method: 'PATCH',
+    body: JSON.stringify({ photo_url: url })
+  });
+  if (res) {
+    loadLeaderboard();
+  } else if (btn) {
+    btn.textContent = '❌ Save failed — tap to retry'; btn.disabled = false;
+  }
+}
+
+// preview selected photo in the form
+document.getElementById('f-photo').addEventListener('change', function() {
+  const wrap = document.getElementById('photo-preview-wrap');
+  const img  = document.getElementById('photo-preview');
+  const file = this.files[0];
+  if (file) {
+    img.src = URL.createObjectURL(file);
+    wrap.style.display = 'block';
+  } else {
+    wrap.style.display = 'none';
+  }
+});
 
 // ── Score button builder ─────────────────────────────
 const scores = { sauce: null, size: null, chicken_quality: null, price: null, user_score: null };
@@ -1013,7 +1092,20 @@ async function submitRating() {
   btn.disabled = true;
   msg.textContent = 'Submitting…';
 
-  const row = { place, rater, sauce, size, chicken_quality, price, user_score, calc_score, notes: notes || null, visited_on };
+  const photoFile = document.getElementById('f-photo').files[0];
+  let photo_url = null;
+  if (photoFile) {
+    msg.textContent = 'Uploading photo…';
+    photo_url = await uploadPhoto(photoFile);
+    if (!photo_url) {
+      msg.className = 'status-msg err';
+      msg.textContent = '❌ Photo upload failed — check console.';
+      btn.disabled = false;
+      return;
+    }
+  }
+
+  const row = { place, rater, sauce, size, chicken_quality, price, user_score, calc_score, notes: notes || null, visited_on, photo_url };
   const res = await sbFetch('wings_ratings', { method: 'POST', body: JSON.stringify(row) });
 
   if (res) {
@@ -1037,6 +1129,8 @@ function resetForm() {
   document.getElementById('f-place-new').value = '';
   document.getElementById('f-rater-new').style.display = 'none';
   document.getElementById('f-rater-new').value = '';
+  document.getElementById('f-photo').value = '';
+  document.getElementById('photo-preview-wrap').style.display = 'none';
   ['br-sauce','br-size','br-chicken','br-price','br-overall'].forEach(id => {
     document.getElementById(id).querySelectorAll('.score-btn').forEach(b => b.classList.remove('active'));
   });
@@ -1168,6 +1262,10 @@ function renderLeaderboard() {
           <span>${escHtml(e.rater)}'s Overall</span><span>${e.user_score}/10</span></div>
         <div class="detail-row"><span>Weighted</span>        <span>${e.calc_score}</span></div>
         ${e.notes ? `<div class="detail-notes">"${escHtml(e.notes)}"</div>` : ''}
+        ${e.photo_url
+          ? `<img class="detail-photo" src="${e.photo_url}" onclick="window.open('${e.photo_url}','_blank')" style="max-width:100%;border-radius:10px;margin-top:8px;cursor:pointer;border:1px solid var(--border)">`
+          : `<button class="add-photo-btn" onclick="addPhotoToRating(${e.id})" style="margin-top:8px">📷 Add Photo</button>
+             <input type="file" accept="image/*" id="latephoto-${e.id}" style="display:none" onchange="uploadLatePhoto(${e.id}, this)">`}
         <div class="detail-row" style="margin-top:6px"><span style="color:var(--muted);font-size:.7rem">${e.visited_on}</span></div>
       </div>`).join('');
 
