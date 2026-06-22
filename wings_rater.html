@@ -460,6 +460,12 @@
   }
   .header-chickens svg { width: 68px; height: 68px; opacity: .75; }
   .header-chickens svg.saucy { opacity: .7; }
+  .dec-row {
+    margin-top: 6px;
+    padding-top: 6px;
+    border-top: 1px dashed var(--border);
+  }
+  .dec-btn { font-size: .72rem; opacity: .9; }
   .add-photo-btn {
     background: transparent;
     border: 1px dashed var(--border);
@@ -983,25 +989,59 @@ document.getElementById('f-photo').addEventListener('change', function() {
 
 // ── Score button builder ─────────────────────────────
 const scores = { sauce: null, size: null, chicken_quality: null, price: null, user_score: null };
+const wholeParts = {}; // remembers the whole number picked per category
 
 function buildScoreButtons(containerId, key, displayId) {
   const row = document.getElementById(containerId);
+  // whole-number row (1–10)
   for (let v = 1; v <= 10; v++) {
     const btn = document.createElement('button');
     btn.className = 'score-btn';
     btn.dataset.v = v;
     btn.textContent = v;
-    btn.onclick = () => selectScore(containerId, key, displayId, v);
+    btn.onclick = () => selectWhole(containerId, key, displayId, v);
     row.appendChild(btn);
   }
+  // decimal row (.0–.9), hidden until a whole number is picked
+  const decRow = document.createElement('div');
+  decRow.className = 'btn-row dec-row';
+  decRow.id = containerId + '-dec';
+  decRow.style.display = 'none';
+  for (let d = 0; d <= 9; d++) {
+    const btn = document.createElement('button');
+    btn.className = 'score-btn dec-btn';
+    btn.dataset.d = d;
+    btn.textContent = '.' + d;
+    btn.onclick = () => selectDecimal(containerId, key, displayId, d);
+    decRow.appendChild(btn);
+  }
+  row.insertAdjacentElement('afterend', decRow);
 }
 
-function selectScore(containerId, key, displayId, val) {
-  scores[key] = val;
-  document.getElementById(displayId).textContent = val;
+function selectWhole(containerId, key, displayId, whole) {
+  wholeParts[key] = whole;
+  scores[key] = whole; // default to .0 until a decimal is tapped
+  document.getElementById(displayId).textContent = whole;
   const row = document.getElementById(containerId);
   row.querySelectorAll('.score-btn').forEach(b => {
-    b.classList.toggle('active', +b.dataset.v === val);
+    b.classList.toggle('active', +b.dataset.v === whole);
+  });
+  // 10 is the max — no decimals beyond 10.0
+  const decRow = document.getElementById(containerId + '-dec');
+  decRow.querySelectorAll('.dec-btn').forEach(b => b.classList.remove('active'));
+  decRow.style.display = whole === 10 ? 'none' : 'flex';
+  updateCalc();
+  playSound('cluck');
+}
+
+function selectDecimal(containerId, key, displayId, dec) {
+  const whole = wholeParts[key] ?? 0;
+  const val = +(whole + dec / 10).toFixed(1);
+  scores[key] = val;
+  document.getElementById(displayId).textContent = val.toFixed(1);
+  const decRow = document.getElementById(containerId + '-dec');
+  decRow.querySelectorAll('.dec-btn').forEach(b => {
+    b.classList.toggle('active', +b.dataset.d === dec);
   });
   updateCalc();
   playSound('cluck');
@@ -1133,9 +1173,12 @@ function resetForm() {
   document.getElementById('photo-preview-wrap').style.display = 'none';
   ['br-sauce','br-size','br-chicken','br-price','br-overall'].forEach(id => {
     document.getElementById(id).querySelectorAll('.score-btn').forEach(b => b.classList.remove('active'));
+    const dec = document.getElementById(id + '-dec');
+    if (dec) { dec.style.display = 'none'; dec.querySelectorAll('.dec-btn').forEach(b => b.classList.remove('active')); }
   });
   ['d-sauce','d-size','d-chicken','d-price','d-overall'].forEach(id => document.getElementById(id).textContent = '—');
   scores.sauce = scores.size = scores.chicken_quality = scores.price = scores.user_score = null;
+  ['sauce','size','chicken_quality','price','user_score'].forEach(k => delete wholeParts[k]);
   document.getElementById('calc-display').textContent = '—';
   document.getElementById('your-score-mini').textContent = '—';
 }
