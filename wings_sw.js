@@ -1,4 +1,4 @@
-const CACHE = 'wings-v3';
+const CACHE = 'wings-v4';
 const STATIC = ['./wings_rater.html', './chicken.mp3', './cluck.mp3'];
 
 self.addEventListener('install', e => {
