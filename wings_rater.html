@@ -1147,28 +1147,13 @@ async function submitRating() {
 
   const row = { place, rater, sauce, size, chicken_quality, price, user_score, calc_score, notes: notes || null, visited_on, photo_url };
 
-  // One rating per person per place: if this rater already rated this place,
-  // update that row and stash their prior weighted score in prev_score.
-  const existing = await sbFetch(
-    'wings_ratings?rater=eq.' + encodeURIComponent(rater) +
-    '&place=eq.' + encodeURIComponent(place) +
-    '&select=id,calc_score&limit=1'
-  );
-
-  let res, updated = false;
-  if (existing && existing.length) {
-    row.prev_score = existing[0].calc_score;       // keep the previous score
-    if (!photo_url) delete row.photo_url;          // don't wipe an existing photo on re-rate
-    res = await sbFetch('wings_ratings?id=eq.' + existing[0].id,
-                        { method: 'PATCH', body: JSON.stringify(row) });
-    updated = true;
-  } else {
-    res = await sbFetch('wings_ratings', { method: 'POST', body: JSON.stringify(row) });
-  }
+  // Every visit is its own entry — a second visit counts separately from the
+  // first and both feed into the place's average.
+  const res = await sbFetch('wings_ratings', { method: 'POST', body: JSON.stringify(row) });
 
   if (res) {
     msg.className = 'status-msg ok';
-    msg.textContent = updated ? '✅ Rating updated! (previous score kept)' : '✅ Rating saved! Nice wings.';
+    msg.textContent = '✅ Rating saved! Nice wings.';
     localStorage.setItem('wings-rater', rater);
     playChickenSound();
     resetForm();
@@ -1322,7 +1307,6 @@ function renderLeaderboard() {
         <div class="detail-row" style="margin-top:4px;border-top:1px solid #2a3040;padding-top:4px">
           <span>${escHtml(e.rater)}'s Overall</span><span>${e.user_score}/10</span></div>
         <div class="detail-row"><span>Weighted</span>        <span>${e.calc_score}</span></div>
-        ${e.prev_score != null ? `<div class="detail-row"><span>Previous</span> <span style="color:var(--muted)">${e.prev_score}</span></div>` : ''}
         ${e.notes ? `<div class="detail-notes">"${escHtml(e.notes)}"</div>` : ''}
         ${e.photo_url
           ? `<img class="detail-photo" src="${e.photo_url}" onclick="window.open('${e.photo_url}','_blank')" style="max-width:100%;border-radius:10px;margin-top:8px;cursor:pointer;border:1px solid var(--border)">`
