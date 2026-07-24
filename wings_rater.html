@@ -511,6 +511,10 @@
     z-index: 0;
   }
   .map-empty { color: var(--muted); font-size: .85rem; padding: 10px 0; }
+  .pin-tool { margin-bottom: 10px; padding: 10px 12px; background: #12151d;
+    border: 1px solid var(--border); border-radius: 8px; }
+  .pin-tool label { display: block; font-size: .8rem; color: var(--muted); margin-bottom: 6px; }
+  #wing-map.pinning { cursor: crosshair; outline: 2px solid var(--accent); }
   .leaflet-popup-content { font-size: .85rem; line-height: 1.35; }
   .leaflet-popup-content b { color: #111; }
   .map-marker-pin {
@@ -956,9 +960,19 @@
   <h2>🗺️ Wing Map
     <button class="btn-refresh" onclick="loadMap()" style="margin-left:auto">↻ Refresh</button>
   </h2>
+
+  <div class="pin-tool">
+    <label style="margin:0">📌 Add a spot to the map</label>
+    <select id="pin-place">
+      <option value="">— Select a place, then tap the map —</option>
+    </select>
+    <div id="pin-status" class="loc-status"></div>
+  </div>
+
   <div id="wing-map"></div>
   <div id="map-empty" class="map-empty" style="display:none">
-    No pinned spots yet — tap <b>📍 Use my location</b> when you rate a place to put it on the map.
+    No pinned spots yet — pick a place above and tap its spot on the map, or tap
+    <b>📍 Use my location</b> when you rate a place you're visiting.
   </div>
 </div>
 
@@ -1524,6 +1538,7 @@ function scoreColor(v) {
 async function loadMap() {
   const places = await sbFetch('wing_places?select=place,lat,lng');
   const pinned = (places || []).filter(p => p.lat != null && p.lng != null);
+  const pinnedSet = new Set(pinned.map(p => p.place));
 
   document.getElementById('map-empty').style.display = pinned.length ? 'none' : 'block';
 
@@ -1535,11 +1550,52 @@ async function loadMap() {
     stats[k].sum += r.calc_score; stats[k].n++;
   });
 
+  // ── populate the "add a spot" dropdown (all places, ✓ = already pinned) ──
+  const allNames = [...new Set([...(allRatings || []).map(r => r.place), ...pinned.map(p => p.place)])]
+    .filter(Boolean).sort();
+  const pinSel = document.getElementById('pin-place');
+  const keep = pinSel.value;
+  pinSel.innerHTML = '<option value="">— Select a place, then tap the map —</option>';
+  allNames.forEach(name => {
+    const opt = document.createElement('option');
+    opt.value = name;
+    opt.textContent = (pinnedSet.has(name) ? '✓ ' : '• ') + name;
+    pinSel.appendChild(opt);
+  });
+  pinSel.value = keep;
+
   if (!wingMap) {
     wingMap = L.map('wing-map', { scrollWheelZoom: false }).setView([39.5, -98.35], 4);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 19, attribution: '© OpenStreetMap'
     }).addTo(wingMap);
+
+    // Tap-to-pin: when a place is selected in the dropdown, a map tap saves it.
+    const mapEl = document.getElementById('wing-map');
+    pinSel.addEventListener('change', () => {
+      mapEl.classList.toggle('pinning', !!pinSel.value);
+      document.getElementById('pin-status').textContent = pinSel.value
+        ? `Tap the map where “${pinSel.value}” is.` : '';
+    });
+    wingMap.on('click', async (e) => {
+      const place = pinSel.value;
+      if (!place) return;
+      const lat = +e.latlng.lat.toFixed(6), lng = +e.latlng.lng.toFixed(6);
+      document.getElementById('pin-status').textContent = `Saving “${place}”…`;
+      const ok = await sbFetch('wing_places?on_conflict=place', {
+        method: 'POST',
+        prefer: 'resolution=merge-duplicates,return=representation',
+        body: JSON.stringify({ place, lat, lng })
+      });
+      if (ok) {
+        document.getElementById('pin-status').textContent = `📍 Pinned “${place}”.`;
+        pinSel.value = '';
+        mapEl.classList.remove('pinning');
+        loadMap();
+      } else {
+        document.getElementById('pin-status').textContent = `❌ Couldn’t save “${place}” — try again.`;
+      }
+    });
   }
   mapMarkers.forEach(m => wingMap.removeLayer(m));
   mapMarkers = [];
