@@ -511,9 +511,6 @@
     z-index: 0;
   }
   .map-empty { color: var(--muted); font-size: .85rem; padding: 10px 0; }
-  .pin-tool { margin-bottom: 10px; padding: 10px 12px; background: #12151d;
-    border: 1px solid var(--border); border-radius: 8px; }
-  .pin-tool label { display: block; font-size: .8rem; color: var(--muted); margin-bottom: 6px; }
   .leaflet-popup-content { font-size: .85rem; line-height: 1.35; }
   .leaflet-popup-content b { color: #111; }
   .map-marker-pin {
@@ -851,7 +848,7 @@
     </select>
     <input type="text" id="f-place-new" placeholder="Type place name" maxlength="80" style="display:none;margin-top:6px">
 
-    <input type="text" id="f-address" placeholder="Street address (for the map) — e.g. 123 Main St, Town NJ"
+    <input type="text" id="f-address" placeholder="Full address (required) — e.g. 123 Main St, Town NJ"
            maxlength="200" style="display:none;margin-top:6px">
     <div id="f-loc-status" class="loc-status"></div>
 
@@ -961,20 +958,9 @@
     <button class="btn-refresh" onclick="loadMap()" style="margin-left:auto">↻ Refresh</button>
   </h2>
 
-  <div class="pin-tool">
-    <label style="margin:0">📌 Set a spot's address</label>
-    <select id="pin-place">
-      <option value="">— Select a place —</option>
-    </select>
-    <input type="text" id="pin-address" placeholder="Street address — e.g. 123 Main St, Town NJ"
-           maxlength="200" style="margin-top:6px">
-    <button type="button" id="pin-save" class="loc-btn" onclick="savePinAddress()" style="margin-top:6px">📍 Find &amp; pin</button>
-    <div id="pin-status" class="loc-status"></div>
-  </div>
-
   <div id="wing-map"></div>
   <div id="map-empty" class="map-empty" style="display:none">
-    No pinned spots yet — pick a place above, enter its address, and tap <b>📍 Find &amp; pin</b>.
+    No spots on the map yet — they appear here automatically as places get added with an address.
   </div>
 </div>
 
@@ -1205,11 +1191,33 @@ async function submitRating() {
     msg.className += ' err'; msg.textContent = 'Please score all 5 categories.'; return;
   }
 
+  // A brand-new place must have an address so it lands on the map.
+  const isNewPlace = document.getElementById('f-place').value === '__new__';
+  const newAddr = isNewPlace ? document.getElementById('f-address').value.trim() : '';
+  if (isNewPlace && !newAddr) {
+    msg.className += ' err';
+    msg.textContent = 'Enter the address for this new place — it puts it on the map.';
+    return;
+  }
+
   const calc_score = +(chicken_quality * 0.40 + sauce * 0.30 + price * 0.20 + size * 0.10).toFixed(2);
 
   const btn = document.getElementById('btn-submit');
   btn.disabled = true;
   msg.textContent = 'Submitting…';
+
+  // Geocode a new place's address first — block the submit if it can't be found.
+  let geo = null;
+  if (isNewPlace) {
+    msg.textContent = 'Finding address…';
+    geo = await geocode(newAddr);
+    if (!geo) {
+      msg.className = 'status-msg err';
+      msg.textContent = '❌ Couldn\'t find that address — add town & state and try again.';
+      btn.disabled = false;
+      return;
+    }
+  }
 
   const photoFile = document.getElementById('f-photo').files[0];
   let photo_url = null;
@@ -1231,13 +1239,9 @@ async function submitRating() {
   const res = await sbFetch('wings_ratings', { method: 'POST', body: JSON.stringify(row) });
 
   if (res) {
-    // If an address was entered (new place), geocode it and pin on the map.
-    const addr = document.getElementById('f-address').value.trim();
-    if (addr) {
-      const geo = await geocode(addr);
-      if (geo) {
-        await savePlaceLocation(place, addr, geo.lat, geo.lng);
-      }
+    // New place: pin it on the map using the address we geocoded above.
+    if (isNewPlace && geo) {
+      await savePlaceLocation(place, newAddr, geo.lat, geo.lng);
     }
     msg.className = 'status-msg ok';
     msg.textContent = '✅ Rating saved! Nice wings.';
@@ -1531,14 +1535,9 @@ function scoreColor(v) {
   return '#e05858';
 }
 
-let placeAddresses = {};   // place -> saved address (for prefilling the tool)
-
 async function loadMap() {
   const places = await sbFetch('wing_places?select=place,lat,lng,address');
   const pinned = (places || []).filter(p => p.lat != null && p.lng != null);
-  const pinnedSet = new Set(pinned.map(p => p.place));
-  placeAddresses = {};
-  (places || []).forEach(p => { if (p.address) placeAddresses[p.place] = p.address; });
 
   document.getElementById('map-empty').style.display = pinned.length ? 'none' : 'block';
 
@@ -1550,31 +1549,11 @@ async function loadMap() {
     stats[k].sum += r.calc_score; stats[k].n++;
   });
 
-  // ── populate the "set a spot's address" dropdown (✓ = already pinned) ──
-  const allNames = [...new Set([...(allRatings || []).map(r => r.place), ...pinned.map(p => p.place)])]
-    .filter(Boolean).sort();
-  const pinSel = document.getElementById('pin-place');
-  const keep = pinSel.value;
-  pinSel.innerHTML = '<option value="">— Select a place —</option>';
-  allNames.forEach(name => {
-    const opt = document.createElement('option');
-    opt.value = name;
-    opt.textContent = (pinnedSet.has(name) ? '✓ ' : '• ') + name;
-    pinSel.appendChild(opt);
-  });
-  pinSel.value = keep;
-
   if (!wingMap) {
     wingMap = L.map('wing-map', { scrollWheelZoom: false }).setView([39.5, -98.35], 4);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 19, attribution: '© OpenStreetMap'
     }).addTo(wingMap);
-
-    // Selecting a place prefills its saved address (if any) into the box.
-    pinSel.addEventListener('change', () => {
-      document.getElementById('pin-address').value = placeAddresses[pinSel.value] || '';
-      document.getElementById('pin-status').textContent = '';
-    });
   }
   mapMarkers.forEach(m => wingMap.removeLayer(m));
   mapMarkers = [];
@@ -1606,33 +1585,6 @@ async function loadMap() {
   }
   // Leaflet needs a nudge when its container was hidden/resized
   setTimeout(() => wingMap.invalidateSize(), 100);
-}
-
-async function savePinAddress() {
-  const place = document.getElementById('pin-place').value;
-  const addr  = document.getElementById('pin-address').value.trim();
-  const st    = document.getElementById('pin-status');
-  const btn   = document.getElementById('pin-save');
-  if (!place) { st.textContent = 'Pick a place first.'; return; }
-  if (!addr)  { st.textContent = 'Enter an address.'; return; }
-  btn.disabled = true;
-  st.textContent = `Looking up “${addr}”…`;
-  const geo = await geocode(addr);
-  if (!geo) {
-    st.textContent = '❌ Address not found — try adding town & state.';
-    btn.disabled = false;
-    return;
-  }
-  const ok = await savePlaceLocation(place, addr, geo.lat, geo.lng);
-  if (ok) {
-    st.textContent = `📍 Pinned “${place}”.`;
-    document.getElementById('pin-place').value = '';
-    document.getElementById('pin-address').value = '';
-    loadMap();
-  } else {
-    st.textContent = `❌ Couldn't save — try again.`;
-  }
-  btn.disabled = false;
 }
 
 // ── Service worker (PWA install) ────────────────────
